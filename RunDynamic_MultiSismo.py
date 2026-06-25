@@ -33,7 +33,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 
-import Geometry_Materials_atualizado_certo as geom
+# import Geometry_Materials_atualizado_certo as geom
+# import VerticalLoad as load
+# import Mass_ok as mass
 
 b_col = 0.35 #m
 h_col = 0.35  #m
@@ -57,6 +59,8 @@ fy_normal_Column_TopBars = 491 #22mm
 
 massPav =  [0.0, 2147.3224999999998] #veio do Mass_ok
 
+base_dir = os.path.dirname(__file__)
+
 # =============================================================================
 # PARÂMETROS DO USUÁRIO  ← edite aqui
 # =============================================================================
@@ -72,7 +76,7 @@ pasta_terremotos = os.path.join(diretorio_atual, 'AT2_por_faixa_PGAgeom', '0.20-
 # Lista explícita de sismos (nomes dos arquivos .at2).
 # Use None para rodar TODOS os arquivos .at2 encontrados na pasta.
 filtro_terremotos = None
-# filtro_terremotos = ['RSN6_IMPVALL.I_I-ELC180.AT2']
+# filtro_terremotos = ['RSN6_IMPVALL.I_I-ELC180.AT2', 'RSN31_PARKF_C08050.AT2', 'RSN31_PARKF_C08320.AT2']
 # filtro_terremotos = ['RSN1_HELENA.A_A-HMC180.at2']
 # filtro_terremotos = ['RSN1007_NORTHR_UNI005.at2', 'RSN0900_LANDERS_LCN260.at2']
 
@@ -450,23 +454,31 @@ def remover_analises():
 
 def modelo2D_IDR_drift(terremoto, Z_pavs):
     nome     = os.path.splitext(terremoto)[0]
-
+    
+    # SEGURO CONTRA KEYERROR: Se Z_pavs vier como dicionário, extrai os valores ordenados em uma lista.
+    # Se já for uma lista, garante que ela comece com 0.0 caso não tenha.
     if isinstance(Z_pavs, dict):
-        Z_pavs = [Z_pavs[k] for k in sorted(Z_pavs.keys())]
+        # Transforma {1: 3.125} em [0.0, 3.125]
+        valores_alturas = sorted(list(Z_pavs.values()))
+        Z_list = valores_alturas
 
-    num_pav  = len(Z_pavs)
+
+    num_pav  = len(Z_list)
     Desloc   = np.loadtxt(f'./Results_Dynamic_Multisismos/{frame_folder}/Modelo2D_{nome}_ODB/Resultados/{nome}_Disp.out')
+    
     Drift_x  = np.zeros([len(Desloc), num_pav])
     Drift_x[:, 0] = Desloc[:, 0]
-    MaxIDR_x = np.array([[0.0] * (num_pav - 1)])
+    MaxIDR_x = np.zeros((1, num_pav - 1)) # Correção na inicialização do array numpy
+    
     aux = 1
     for pav in range(1, num_pav):
-        Drift_x[:, pav] = (Desloc[:, aux + 3] - Desloc[:, aux]) / (Z_pavs[pav] - Z_pavs[pav - 1])
+        # Usando 'Z_list' que temos certeza que aceita os índices 1 e 0 sem dar KeyError
+        Drift_x[:, pav] = (Desloc[:, aux + 3] - Desloc[:, aux]) / (Z_list[pav] - Z_list[pav - 1])
         aux += 3
         MaxIDR_x[0][pav - 1] = np.max(abs(Drift_x[:, pav]))
-    MaxDrift_Edificio = np.max(abs(Desloc[:, -3]) / Z_pavs[-1])
+        
+    MaxDrift_Edificio = np.max(abs(Desloc[:, -3]) / Z_list[-1])
     return MaxIDR_x, float(np.max(MaxIDR_x)), float(MaxDrift_Edificio)
-
 
 def modelo2D_deslocamento(terremoto, Z_pavs):
     nome = os.path.splitext(terremoto)[0]
@@ -479,17 +491,9 @@ def modelo2D_deslocamento(terremoto, Z_pavs):
     return float(np.max(abs(np.column_stack(vals))))
 
 
-def modelo2D_velocidade(
-        terremoto,
-        Z_pavs,
-        vel_history,
-        pasta_terremotos):
-
-    if isinstance(Z_pavs, dict):
-        Z_pavs = [Z_pavs[k] for k in sorted(Z_pavs.keys())]
-
-    nome     = os.path.splitext(terremoto)[0]
-    num_pav  = len(Z_pavs)
+def modelo2D_velocidade(terremoto, Z_pavs, vel_history, pasta_terremotos):
+    nome    = os.path.splitext(terremoto)[0]
+    num_pav = len(Z_pavs)
     Vel     = np.loadtxt(f'./Results_Dynamic_Multisismos/{frame_folder}/Modelo2D_{nome}_ODB/Resultados/{nome}_Vel.out')
     dt, nPts = ReadRecord(f'{pasta_terremotos}/{nome}.at2', './deletar')
     time_history = np.insert(np.linspace(dt, nPts * dt, nPts), 0, 0.0)
@@ -700,9 +704,9 @@ for idx_sismo, terremoto in enumerate(terremotos):
                 ops.wipe()
                 ops.model('basic', '-ndm', 2)
 
-                exec(open('Geometry_Materials_atualizado_certo.py').read())
-                exec(open('VerticalLoad.py').read())
-                exec(open('Mass_chat.py').read())
+                exec(open(os.path.join(base_dir, 'Geometry_Materials_atualizado_certo.py')).read(), globals())
+                exec(open(os.path.join(base_dir, 'VerticalLoad.py')).read(), globals())
+                exec(open(os.path.join(base_dir, 'Mass_ok.py')).read(), globals())
 
                 if Infill_wall == 'Yes':
                     exec(open('Geometry_InfillFrame.py').read())
@@ -797,9 +801,9 @@ for idx_sismo, terremoto in enumerate(terremotos):
             terremoto=terremoto, Z_pavs=Z_pavs)
         MaxDESLOC = modelo2D_deslocamento(
             terremoto=terremoto, Z_pavs=Z_pavs)
-        # MaxVEL_ABS_pavs_x, MaxVEL_ABS, MaxVEL_Rel = modelo2D_velocidade(
-        #     terremoto=terremoto, Z_pavs=Z_pavs,
-        #     vel_history=vel_history, pasta_terremotos=pasta_terremotos)
+        MaxVEL_ABS_pavs_x, MaxVEL_ABS, MaxVEL_Rel = modelo2D_velocidade(
+            terremoto=terremoto, Z_pavs=Z_pavs,
+            vel_history=vel_history, pasta_terremotos=pasta_terremotos)
         MaxAccels_ABS_pavs_x, MaxACCEL_ABS = modelo2D_aceleracaoABS(
             terremoto=terremoto, Z_pavs=Z_pavs)
 
